@@ -88,7 +88,7 @@ dialog{border:1px solid var(--bd);border-radius:12px;background:var(--card);colo
     <select id="fm"><option value="">ทุกเดือน</option></select>
     <input type="search" id="q" placeholder="ค้นหาลูกค้า / Sales / เหตุผล">
   </div>
-  <div class="tw"><table><thead><tr><th>วันที่</th><th>ลูกค้า</th><th>Site</th><th>จำนวนผู้เข้าพบ</th><th>ผู้บริหารสูงสุดที่พบ</th><th>Sales</th><th>เหตุผล</th><th>หมายเหตุ</th><th></th></tr></thead><tbody id="tb"></tbody></table></div>
+  <div class="tw"><table><thead><tr><th>วันที่ / เวลา</th><th>ลูกค้า</th><th>Site</th><th>จำนวนผู้เข้าพบ</th><th>ผู้บริหารสูงสุดที่พบ</th><th>Sales</th><th>เหตุผล</th><th>หมายเหตุ</th><th></th></tr></thead><tbody id="tb"></tbody></table></div>
 </section>
 </div>
 
@@ -109,7 +109,6 @@ dialog{border:1px solid var(--bd);border-radius:12px;background:var(--card);colo
 </dialog>
 <dialog id="dlgDel"><h3>ลบรายการนี้?</h3><div id="delTxt" class="sub" style="margin-bottom:12px"></div><div style="display:flex;justify-content:flex-end;gap:8px"><button id="delNo">ยกเลิก</button><button class="primary" id="delOk" style="background:#c0392b;border-color:#c0392b">ลบ</button></div></dialog>
 
-<!-- วาง Firebase config ที่คุณให้มาไว้ตรงนี้ -->
 <script>
   // For Firebase JS SDK v7.20.0 and later, measurementId is optional
   const FIREBASE_CONFIG = {
@@ -125,8 +124,6 @@ dialog{border:1px solid var(--bd);border-radius:12px;background:var(--card);colo
 </script>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-
-<!-- Firebase compat SDK -->
 <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-database-compat.js"></script>
@@ -137,13 +134,16 @@ const DOW=["จ","อ","พ","พฤ","ศ","ส","อา"];
 const $=id=>document.getElementById(id);
 const pad=n=>String(n).padStart(2,"0"), ymd=(y,m,d)=>`${y}-${pad(m+1)}-${pad(d)}`;
 const now=new Date(), TODAY=ymd(now.getFullYear(),now.getMonth(),now.getDate());
-let rows=[], view={y:now.getFullYear(),m:now.getMonth()}, sel=TODAY, canEdit=false;
+let rows=[], view={y:now.getFullYear(),m:now.getMonth()}, sel=TODAY, db=null, canEdit=false;
 const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const cls=s=>["TGI","BGP"].includes(String(s).trim().toUpperCase())?String(s).trim().toUpperCase():"OTH";
-const fmt=d=>{const[a,b,c]=d.split("-");return `${+c} ${MONTHS[+b-1].slice(0,3)}${MONTHS[+b-1].length>5?"":""} ${a}`};
+const fmt=(d,t="")=>{
+  const[a,b,c]=d.split("-");
+  const dateText=`${+c} ${MONTHS[+b-1].slice(0,3)}${MONTHS[+b-1].length>5?"":""} ${a}`;
+  return t ? `${dateText} • ${t} น.` : dateText;
+};
 function msg(t){const m=$("msg");m.textContent=t;m.style.display=t?"block":"none"}
 
-/* ---------- Render (เหมือนเดิม) ---------- */
 function renderKpis(){
   const ym=`${now.getFullYear()}-${pad(now.getMonth()+1)}`;
   const end=new Date(now.getTime()+30*864e5), endS=ymd(end.getFullYear(),end.getMonth(),end.getDate());
@@ -166,7 +166,7 @@ function renderCal(){
   $("days").innerHTML=h;
   document.querySelectorAll(".day").forEach(el=>el.onclick=()=>{sel=el.dataset.d;renderCal();renderDetail()});
 }
-const card=r=>`<div class="item ${cls(r.site)}"><div class="t">${esc(r.customer)} <span class="m">· ${esc(r.site)}</span></div><div class="m">${fmt(r.date)}${r.n!==""?` · ${esc(r.n)} คน`:""}${r.top?` · ${esc(r.top)}`:""}</div>${r.sales?`<div class="m">Sales: ${esc(r.sales)}</div>`:""}${r.reason?`<div class="m">เหตุผล: ${esc(r.reason)}</div>`:""}${r.remark?`<div class="m">หมายเหตุ: ${esc(r.remark)}</div>`:""}</div>`;
+const card=r=>`<div class="item ${cls(r.site)}"><div class="t">${esc(r.customer)} <span class="m">· ${esc(r.site)}</span></div><div class="m">${fmt(r.date, r.time)}${r.n!==""?` · ${esc(r.n)} คน`:""}${r.top?` · ${esc(r.top)}`:""}</div>${r.sales?`<div class="m">Sales: ${esc(r.sales)}</div>`:""}${r.reason?`<div class="m">เหตุผล: ${esc(r.reason)}</div>`:""}${r.remark?`<div class="m">หมายเหตุ: ${esc(r.remark)}</div>`:""}</div>`;
 function renderDetail(){
   const ev=rows.filter(r=>r.date===sel);
   $("dt").textContent="วันที่ "+fmt(sel);
@@ -180,28 +180,31 @@ function renderDetail(){
 function renderTable(){
   const s=$("fs").value,m=$("fm").value,q=$("q").value.toLowerCase();
   const f=rows.filter(r=>(!s||cls(r.site)===s)&&(!m||r.date.slice(0,7)===m)&&(!q||Object.values(r).join(" ").toLowerCase().includes(q)));
-  $("tb").innerHTML=f.length?f.map(r=>`<tr><td>${fmt(r.date)}</td><td>${esc(r.customer)}</td><td><span class="ev ${cls(r.site)}" style="font-size:12px;font-weight:600">${esc(r.site)}</span></td><td>${esc(r.n)}</td><td>${esc(r.top)}</td><td>${esc(r.sales)}</td><td class="w">${esc(r.reason)}</td><td class="w">${esc(r.remark)}</td><td>${acts(r)}</td></tr>`).join(""):`<tr><td colspan="9" class="empty">ไม่พบข้อมูล</td></tr>`;
+  $("tb").innerHTML=f.length?f.map(r=>`<tr><td>${fmt(r.date, r.time)}</td><td>${esc(r.customer)}</td><td><span class="ev ${cls(r.site)}" style="font-size:12px;font-weight:600">${esc(r.site)}</span></td><td>${esc(r.n)}</td><td>${esc(r.top)}</td><td>${esc(r.sales)}</td><td class="w">${esc(r.reason)}</td><td class="w">${esc(r.remark)}</td><td>${acts(r)}</td></tr>`).join(""):`<tr><td colspan="9" class="empty">ไม่พบข้อมูล</td></tr>`;
   const ms=[...new Set(rows.map(r=>r.date.slice(0,7)))],cur=$("fm").value;
   $("fm").innerHTML=`<option value="">ทุกเดือน</option>`+ms.map(x=>`<option value="${x}"${x===cur?" selected":""}>${MONTHS[+x.slice(5)-1]} ${x.slice(0,4)}</option>`).join("");
 }
 function renderAll(){rows.forEach(r=>r.id=r.id||uid());renderKpis();renderCal();renderDetail();renderTable();if(!rows.length)msg(canEdit?"ยังไม่มีข้อมูล — กด “＋ เพิ่มการเข้าพบ” เพื่อเริ่มต้น":"ยังไม่มีข้อมูลในระบบ")
   else msg(window.flash||"")}
 
-/* ---------- Add / edit / delete ---------- */
 function uid(){return "r"+Math.random().toString(36).slice(2,10)}
 function acts(r){return `<button class="mini" data-ed="${r.id}">✎ แก้ไข</button><button class="mini" data-del="${r.id}">🗑 ลบ</button>`}
 const LS="bjc_visits_v1",PWK="bjc_pass";let stamp=null;
-const sortRows=a=>a.sort((x,y)=>x.date.localeCompare(y.date)||String(x.customer).localeCompare(String(y.customer)));
-function setUpd(){$("upd").textContent=(stamp?`อัปเดตล่าสุด: ${new Date(stamp).toLocaleString("th-TH")} · `:"")+`${rows.length} รายการ`+(/*local*/ false?" · โหมดทดลอง (เก็บในเบราว์เซอร์นี้)":"")}
+const sortRows=a=>a.sort((x,y)=>{
+  const d=x.date.localeCompare(y.date);
+  if(d!==0) return d;
+  return String(x.time||"00:00").localeCompare(String(y.time||"00:00")) || String(x.customer).localeCompare(String(y.customer));
+});
+function setUpd(){$("upd").textContent=(stamp?`อัปเดตล่าสุด: ${new Date(stamp).toLocaleString("th-TH")} · `:"")+`${rows.length} รายการ`+(MODE==="local"?" · โหมดทดลอง (เก็บในเบราว์เซอร์นี้)":"")}
 
-/* ---------- Local fallback (ถ้า Firebase ใช้ไม่ได้) ---------- */
-function loadLocal(){
+async function loadLocal(){
   try{
     rows=JSON.parse(localStorage.getItem(LS)||"[]");
     stamp=localStorage.getItem(LS+"_t");
     sortRows(rows);setUpd();renderAll();
   }catch(e){$("upd").textContent="โหลดข้อมูลไม่สำเร็จ";msg("โหลด localStorage ไม่สำเร็จ: "+(e.message||e))}
 }
+
 async function opLocal(body,text){
   const prev=rows.map(r=>r);
   rows=body.action==="upsert"?(rows.some(r=>r.id===body.row.id)?rows.map(r=>r.id===body.row.id?body.row:r):[...rows,body.row]):rows.filter(r=>r.id!==body.id);
@@ -211,7 +214,6 @@ async function opLocal(body,text){
   }catch(e){rows=prev;window.flash="";renderAll();msg("บันทึกไม่สำเร็จ: "+(e.message||e))}
 }
 
-/* ---------- Firebase Realtime DB integration ---------- */
 let fbApp=null, fbAuth=null, fbDb=null, fbRef=null;
 function initFirebase(){
   try{
@@ -221,11 +223,9 @@ function initFirebase(){
   }catch(e){
     console.error("Firebase init error", e);
     msg("Firebase init error: "+e.message);
-    // fallback to local
     canEdit=true; $("tools").style.display="flex"; loadLocal();
     return;
   }
-  // sign-in anonymously so we can allow writes in rules
   fbAuth.signInAnonymously().then(() => {
     canEdit=true;
     $("tools").style.display="flex";
@@ -233,7 +233,6 @@ function initFirebase(){
   }).catch(err=>{
     console.warn("Anonymous sign-in failed:", err);
     msg("เชื่อมต่อ Firebase ไม่สำเร็จ: "+err.message);
-    // fallback to local
     canEdit=true; $("tools").style.display="flex"; loadLocal();
   });
 }
@@ -241,7 +240,6 @@ function initFirebase(){
 function startRealtimeListener(){
   try{
     fbRef = fbDb.ref('visits');
-    // on value -> rebuild rows
     fbRef.on('value', snapshot=>{
       const data = snapshot.val() || {};
       rows = Object.keys(data).map(k=>{
@@ -249,6 +247,7 @@ function startRealtimeListener(){
         return {
           id: k,
           date: r.date||"",
+          time: r.time||"",
           customer: r.customer||"",
           site: r.site||"",
           n: r.n===undefined? "": r.n,
@@ -259,7 +258,6 @@ function startRealtimeListener(){
           updatedAt: r.updatedAt ? new Date(r.updatedAt).toISOString() : null
         };
       });
-      // find latest updatedAt
       let latest = null;
       rows.forEach(r=>{ if(r.updatedAt){ const t=new Date(r.updatedAt).getTime(); if(!latest || t>latest) latest=t }});
       stamp = latest ? new Date(latest).toISOString() : null;
@@ -277,7 +275,6 @@ async function opFirebase(body,text){
   try{
     if(body.action==="upsert"){
       const row = {...body.row};
-      // write with server timestamp
       await fbDb.ref('visits/'+row.id).set({...row, updatedAt: firebase.database.ServerValue.TIMESTAMP});
       window.flash=text;
       return;
@@ -291,16 +288,14 @@ async function opFirebase(body,text){
   }
 }
 
-/* op wrapper decides firebase vs local */
 async function op(body,text){
   if(fbDb) return opFirebase(body,text);
   return opLocal(body,text);
 }
 
-/* ---------- Form handling (เหมือนเดิม) ---------- */
-const FIELDS=["date","customer","site","n","top","sales","reason","remark"],F=k=>$("f_"+k);let editId=null;
+const FIELDS=["date","time","customer","site","n","top","sales","reason","remark"],F=k=>$("f_"+k);let editId=null;
 function openForm(id){
-  editId=id||null;const r=rows.find(x=>x.id===id)||{date:sel,customer:"",site:"TGI",n:"",top:"",sales:"",reason:"",remark:""};
+  editId=id||null;const r=rows.find(x=>x.id===id)||{date:sel,time:"",customer:"",site:"TGI",n:"",top:"",sales:"",reason:"",remark:""};
   FIELDS.forEach(k=>F(k).value=r[k]??"");$("dlgT").textContent=id?"แก้ไขการเข้าพบ":"เพิ่มการเข้าพบ";$("dlgE").textContent="";$("dlg").showModal();
 }
 $("addBtn").onclick=()=>openForm();
@@ -309,6 +304,7 @@ $("saveBtn").onclick=async()=>{
   const o={};FIELDS.forEach(k=>o[k]=F(k).value.trim());o.n=o.n===""?"":Number(o.n);
   if(!o.date||!o.customer){$("dlgE").textContent="กรุณากรอกวันที่และชื่อลูกค้า";return}
   const row={...o,id:editId||uid()};
+  row.time = row.time || "";
   sel=o.date;view={y:+o.date.slice(0,4),m:+o.date.slice(5,7)-1};$("dlg").close();
   await op({action:"upsert",row},editId?"✓ แก้ไขข้อมูลแล้ว":"✓ เพิ่มข้อมูลแล้ว");
 };
@@ -317,31 +313,28 @@ document.addEventListener("click",e=>{
   const t=e.target.closest("[data-ed],[data-del]");if(!t)return;
   if(t.dataset.ed){openForm(t.dataset.ed);return}
   const r=rows.find(x=>x.id===t.dataset.del);if(!r)return;
-  delId=r.id;$("delTxt").textContent=`${fmt(r.date)} · ${r.customer} (${r.site})`;$("dlgDel").showModal();
+  delId=r.id;$("delTxt").textContent=`${fmt(r.date, r.time)} · ${r.customer} (${r.site})`;$("dlgDel").showModal();
 });
 $("delNo").onclick=()=>$("dlgDel").close();
 $("delOk").onclick=async()=>{const id=delId;$("dlgDel").close();await op({action:"delete",id},"✓ ลบข้อมูลแล้ว")};
 
-/* ---------- Controls ---------- */
 $("prev").onclick=()=>{view.m--;if(view.m<0){view.m=11;view.y--}renderCal()};
 $("next").onclick=()=>{view.m++;if(view.m>11){view.m=0;view.y++}renderCal()};
 $("today").onclick=()=>{view={y:now.getFullYear(),m:now.getMonth()};sel=TODAY;renderCal();renderDetail()};
 ["fs","fm"].forEach(i=>$(i).onchange=renderTable);$("q").oninput=renderTable;
 $("tpl").onclick=()=>{
-  const head=["Date of visit","Customer","Site visit","No. of customers visit","Highest position visit (Name/Position)","Sales person","Reason to visit","Remark"];
-  const body=rows.map(r=>{const[y,m,d]=r.date.split("-").map(Number);return[new Date(y,m-1,d,12),r.customer,r.site,r.n,r.top,r.sales,r.reason,r.remark]});
+  const head=["Date of visit","Customer","Site visit","Time of visit","No. of customers visit","Highest position visit (Name/Position)","Sales person","Reason to visit","Remark"];
+  const body=rows.map(r=>{const[y,m,d]=r.date.split("-").map(Number);return[new Date(y,m-1,d,12),r.customer,r.site,r.time,r.n,r.top,r.sales,r.reason,r.remark]});
   const ws=XLSX.utils.aoa_to_sheet([head,...body],{cellDates:true});
   for(let i=1;i<=body.length;i++){const c=ws["A"+(i+1)];if(c)c.z="d-mmm-yy"}
-  ws["!cols"]=[{wch:12},{wch:28},{wch:10},{wch:12},{wch:34},{wch:16},{wch:30},{wch:30}];
+  ws["!cols"]=[{wch:12},{wch:28},{wch:10},{wch:12},{wch:12},{wch:34},{wch:16},{wch:30},{wch:30}];
   const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,"List");XLSX.writeFile(wb,"2026_customer_visit_list.xlsx",{cellDates:true});
 };
 
-/* ---------- Start ---------- */
-// init Firebase if config exists
+const MODE="firebase";
 if(typeof FIREBASE_CONFIG==="object" && FIREBASE_CONFIG && Object.keys(FIREBASE_CONFIG).length>0){
   initFirebase();
 } else {
-  // fallback local mode
   canEdit=true;
   $("tools").style.display="flex";
   window.flash="โหมดทดลอง: ข้อมูลเก็บในเบราว์เซอร์เครื่องนี้เท่านั้น — ตั้งค่า FIREBASE_CONFIG เพื่อแชร์ข้อมูลทุกเครื่อง";
@@ -349,7 +342,6 @@ if(typeof FIREBASE_CONFIG==="object" && FIREBASE_CONFIG && Object.keys(FIREBASE_
   loadLocal();
 }
 
-// refresh local view if no dialogs open (firebase listener handles realtime)
 setInterval(()=>{ if(!document.querySelector("dialog[open]")) { if(!fbDb) loadLocal(); } },30000);
 </script>
 </body>
